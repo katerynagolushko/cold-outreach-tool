@@ -1,65 +1,117 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Card, ALL_STAGES, STAGE_LABELS, btn } from "@/components/ui";
+import type { Stage } from "@/lib/db";
+
+interface Stats {
+  byStage: Record<Stage, number>;
+  totals: { leads: number; sent: number; replies: number; campaigns: number };
+  recent: Array<{
+    id: number;
+    lead_id: number;
+    type: string;
+    content: string;
+    created_at: string;
+    first_name: string;
+    last_name: string;
+    company: string;
+  }>;
+}
+
+const TYPE_ICONS: Record<string, string> = {
+  note: "📝",
+  stage_change: "🔀",
+  email_sent: "📤",
+  reply: "📥",
+  created: "✨",
+};
+
+export default function Dashboard() {
+  const [stats, setStats] = useState<Stats | null>(null);
+
+  useEffect(() => {
+    fetch("/api/stats")
+      .then((r) => r.json())
+      .then(setStats)
+      .catch(() => setStats(null));
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <Link href="/search" className={btn.primary}>
+          + Find leads
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {[
+          { label: "Total leads", value: stats?.totals.leads },
+          { label: "Emails sent", value: stats?.totals.sent },
+          { label: "Leads replied", value: stats?.totals.replies },
+          { label: "Campaigns", value: stats?.totals.campaigns },
+        ].map((s) => (
+          <Card key={s.label}>
+            <div className="text-sm text-slate-500">{s.label}</div>
+            <div className="mt-1 text-3xl font-semibold tabular-nums">{s.value ?? "–"}</div>
+          </Card>
+        ))}
+      </div>
+
+      <Card>
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Pipeline
+        </h2>
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+          {ALL_STAGES.map((s) => (
+            <Link
+              key={s}
+              href={`/leads?stage=${s}`}
+              className="rounded-lg border border-slate-200 p-3 text-center hover:border-indigo-300 hover:bg-indigo-50/40"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+              <div className="text-2xl font-semibold tabular-nums">
+                {stats?.byStage?.[s] ?? "–"}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">{STAGE_LABELS[s]}</div>
+            </Link>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Recent activity
+        </h2>
+        {stats && stats.recent.length === 0 && (
+          <p className="text-sm text-slate-500">
+            No activity yet. Start by{" "}
+            <Link href="/search" className="text-indigo-600 underline">
+              finding some leads
+            </Link>
+            .
           </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        )}
+        <ul className="divide-y divide-slate-100">
+          {stats?.recent.map((a) => (
+            <li key={a.id} className="flex items-center gap-3 py-2.5 text-sm">
+              <span>{TYPE_ICONS[a.type] ?? "•"}</span>
+              <Link
+                href={`/leads/${a.lead_id}`}
+                className="whitespace-nowrap font-medium text-slate-800 hover:text-indigo-600"
+              >
+                {a.first_name} {a.last_name}
+              </Link>
+              <span className="truncate text-slate-500">{a.content}</span>
+              <span className="ml-auto whitespace-nowrap text-xs text-slate-400">
+                {a.created_at}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
   );
 }
