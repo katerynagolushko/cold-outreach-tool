@@ -1,20 +1,28 @@
 import { NextResponse } from "next/server";
 import { q, addActivity, setStage, type Lead } from "@/lib/db";
-import { gmailConfigured, findRepliesFrom } from "@/lib/gmail";
+import { gmailConfigured, findRepliesFrom, type GmailCreds } from "@/lib/gmail";
+import { authRequired, currentUser } from "@/lib/auth";
+import { effectiveCreds } from "@/lib/user-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 /**
- * Scan the Gmail inbox for replies from any contacted lead and update the CRM:
- * records the reply and moves the lead to the "replied" stage.
+ * Scan the signed-in user's Gmail inbox for replies from any of their
+ * contacted leads and update the CRM: records the reply and moves the lead
+ * to the "replied" stage.
  */
 export async function POST() {
-  if (!gmailConfigured()) {
+  const user = await currentUser();
+  if (!user) return authRequired();
+
+  const creds = await effectiveCreds(user.id);
+  const gmail: GmailCreds = { user: creds.gmailUser, pass: creds.gmailAppPassword };
+  if (!gmailConfigured(gmail)) {
     return NextResponse.json(
       {
         error:
-          "Gmail is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD to enable reply tracking.",
+          "Gmail is not connected for your profile. Add your Gmail address and app password in Settings to enable reply tracking.",
       },
       { status: 400 }
     );
@@ -22,7 +30,9 @@ export async function POST() {
   const contacted = await q<Lead & { first_sent: string }>(
     `SELECT l.*, (SELECT MIN(sent_at) FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent') AS first_sent
      FROM leads l
-     WHERE EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent')`
+     WHERE l.user_id = $1
+       AND EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent')`,
+    [user.id]
   );
 
   if (contacted.length === 0) {
@@ -35,6 +45,7 @@ export async function POST() {
 
   try {
     const inbox = await findRepliesFrom(
+      gmail,
       contacted.map((l) => l.email),
       earliest
     );

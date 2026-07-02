@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { q, one, TS } from "@/lib/db";
+import { authRequired, currentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
+  const user = await currentUser();
+  if (!user) return authRequired();
+
   const { id } = await ctx.params;
-  const campaign = await one("SELECT * FROM campaigns WHERE id = $1", [id]);
+  const campaign = await one("SELECT * FROM campaigns WHERE id = $1 AND user_id = $2", [
+    id,
+    user.id,
+  ]);
   if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const messages = await q(
     `SELECT m.*, to_char(m.sent_at, '${TS}') AS sent_at,
@@ -21,7 +28,15 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 }
 
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
+  const user = await currentUser();
+  if (!user) return authRequired();
+
   const { id } = await ctx.params;
+  const campaign = await one("SELECT id FROM campaigns WHERE id = $1 AND user_id = $2", [
+    id,
+    user.id,
+  ]);
+  if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
   await q("UPDATE messages SET campaign_id = NULL WHERE campaign_id = $1", [id]);
   await q("DELETE FROM campaigns WHERE id = $1", [id]);
   return NextResponse.json({ ok: true });

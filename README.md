@@ -23,6 +23,24 @@ account, and track every lead through a sales pipeline — in one small self-hos
    who replied. Every lead moves through a pipeline —
    **New → Contacted → Replied → Meeting → Won / Lost** — on a drag-and-drop
    board, with notes and a full activity history per lead.
+5. **Profiles** — the app is multi-user: everyone signs in with their own
+   email + password, and each profile has its own private leads, campaigns,
+   pipeline, Gmail connection and API keys.
+
+## Profiles & sign-in
+
+- Open the app and **create your profile** (name, email, password). You stay
+  signed in for 30 days per browser.
+- If the deployment has `APP_PASSWORD` set, it doubles as an **invite code**:
+  new profiles can only be created by someone who knows it. Share it to invite
+  teammates; each gets their own separate workspace.
+- The **first profile ever created adopts all data** from before profiles
+  existed, so an upgraded single-user install keeps its leads and campaigns —
+  make sure that first sign-up is you.
+- Gmail and provider keys are configured per profile on the **Settings** page.
+  Secrets are encrypted at rest when `AUTH_SECRET` (or `APP_PASSWORD`) is set.
+  Environment variables (`GMAIL_*`, `APOLLO_API_KEY`, `HUNTER_API_KEY`) still
+  work as server-wide defaults for any profile that hasn't set its own.
 
 ## Quick start (local)
 
@@ -41,13 +59,9 @@ free [Neon](https://neon.tech) Postgres connection string.
 
 1. Enable **2-Step Verification** on the account (app passwords require it).
 2. Create an app password at <https://myaccount.google.com/apppasswords>.
-3. In `.env.local`:
-
-   ```
-   GMAIL_USER=you@yourcompany.com
-   GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx
-   GMAIL_FROM_NAME=Your Name
-   ```
+3. Paste your address and the app password in **Settings → Email sending**
+   (or set `GMAIL_USER` / `GMAIL_APP_PASSWORD` / `GMAIL_FROM_NAME` in
+   `.env.local` as a server-wide default).
 
 That single credential powers both sending (SMTP) and reply detection (IMAP).
 If your Workspace admin has disabled app passwords, ask them to allow
@@ -55,6 +69,9 @@ If your Workspace admin has disabled app passwords, ask them to allow
 you can also use an OAuth-enabled sending tool of your choice.
 
 ## Connecting a lead-data provider
+
+Paste your key on the **Settings** page (per profile), or set the env var as
+a server-wide default:
 
 | Provider | Env var | Notes |
 |---|---|---|
@@ -64,11 +81,14 @@ you can also use an OAuth-enabled sending tool of your choice.
 
 ## Deploying
 
-Deploy to Vercel and set two environment variables:
+Deploy to Vercel and set these environment variables:
 
 - `DATABASE_URL` — a free [Neon](https://neon.tech) Postgres connection string
   (without it, the hosted copy runs in ephemeral demo mode and resets itself)
-- `APP_PASSWORD` — protects the hosted instance with a password
+- `APP_PASSWORD` — the invite code required to create new profiles
+  (recommended for any hosted deployment; without it sign-up is open)
+- `AUTH_SECRET` — any long random string; encrypts the secrets profiles save
+  in Settings (falls back to `APP_PASSWORD` if unset)
 
 The schema is created automatically on first request. Point your local
 `.env.local` at the same `DATABASE_URL` and your machine and the hosted app

@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchLeads, type ProviderName } from "@/lib/providers";
 import { q } from "@/lib/db";
+import { authRequired, currentUser } from "@/lib/auth";
+import { effectiveCreds } from "@/lib/user-settings";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const user = await currentUser();
+  if (!user) return authRequired();
+
   try {
     const body = await req.json();
     const query = {
@@ -16,11 +21,17 @@ export async function POST(req: NextRequest) {
     if (!query.role && !query.company && !query.city) {
       return NextResponse.json({ error: "Enter at least one keyword" }, { status: 400 });
     }
-    const result = await searchLeads(query, (body.provider as ProviderName) ?? "auto");
+    const creds = await effectiveCreds(user.id);
+    const result = await searchLeads(query, (body.provider as ProviderName) ?? "auto", {
+      apollo: creds.apolloApiKey || undefined,
+      hunter: creds.hunterApiKey || undefined,
+    });
 
-    // annotate which results are already in the CRM
+    // annotate which results are already in this user's CRM
     const existing = new Set(
-      (await q<{ email: string }>("SELECT email FROM leads")).map((r) => r.email.toLowerCase())
+      (
+        await q<{ email: string }>("SELECT email FROM leads WHERE user_id = $1", [user.id])
+      ).map((r) => r.email.toLowerCase())
     );
     const leads = result.leads.map((l) => ({
       ...l,

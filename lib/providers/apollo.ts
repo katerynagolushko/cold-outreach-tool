@@ -1,13 +1,12 @@
 import type { FoundLead, SearchQuery, SearchResult } from "./types";
 
 /**
- * Apollo.io people search. Requires APOLLO_API_KEY.
+ * Apollo.io people search. Requires an Apollo API key.
  * https://docs.apollo.io/reference/people-search
  * Note: revealing email addresses consumes Apollo credits.
  */
-export async function searchApollo(q: SearchQuery): Promise<SearchResult> {
-  const apiKey = process.env.APOLLO_API_KEY;
-  if (!apiKey) throw new Error("APOLLO_API_KEY is not configured");
+export async function searchApollo(q: SearchQuery, apiKey?: string): Promise<SearchResult> {
+  if (!apiKey) throw new Error("Apollo is not configured — add your API key in Settings.");
 
   const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
     method: "POST",

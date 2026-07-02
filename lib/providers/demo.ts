@@ -71,7 +71,7 @@ export function searchDemo(q: SearchQuery): SearchResult {
     provider: "Demo data",
     demo: true,
     note:
-      "These are sample leads (no lead-data API key configured). Add APOLLO_API_KEY or HUNTER_API_KEY in Settings to search real contacts. Demo emails use the reserved .example TLD and can never reach a real inbox.",
+      "These are sample leads (no lead-data API key configured). Add an Apollo or Hunter API key in Settings to search real contacts. Demo emails use the reserved .example TLD and can never reach a real inbox.",
     leads,
   };
 }

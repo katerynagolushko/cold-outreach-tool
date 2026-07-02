@@ -65,11 +65,34 @@ async function createExec(): Promise<Exec> {
 }
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  gmail_user TEXT NOT NULL DEFAULT '',
+  gmail_app_password TEXT NOT NULL DEFAULT '',
+  gmail_from_name TEXT NOT NULL DEFAULT '',
+  apollo_api_key TEXT NOT NULL DEFAULT '',
+  hunter_api_key TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS leads (
   id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
   first_name TEXT NOT NULL,
   last_name TEXT NOT NULL DEFAULT '',
-  email TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT '',
   company TEXT NOT NULL DEFAULT '',
   city TEXT NOT NULL DEFAULT '',
@@ -80,6 +103,7 @@ CREATE TABLE IF NOT EXISTS leads (
 );
 CREATE TABLE IF NOT EXISTS campaigns (
   id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   subject TEXT NOT NULL,
   body TEXT NOT NULL,
@@ -113,6 +137,13 @@ CREATE TABLE IF NOT EXISTS activities (
   content TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS leads_user_email_key ON leads (user_id, email);
+CREATE INDEX IF NOT EXISTS leads_user_idx ON leads (user_id);
+CREATE INDEX IF NOT EXISTS campaigns_user_idx ON campaigns (user_id);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
 `;
 
 async function getExec(): Promise<Exec> {

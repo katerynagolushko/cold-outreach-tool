@@ -3,34 +3,40 @@ import { ImapFlow } from "imapflow";
 
 /**
  * Gmail / Google Workspace integration via app password.
- * Configure:
- *   GMAIL_USER          your corporate address, e.g. you@yourcompany.com
- *   GMAIL_APP_PASSWORD  16-char app password (myaccount.google.com/apppasswords)
- *   GMAIL_FROM_NAME     optional display name
+ * Credentials are per-profile (saved in Settings, with the GMAIL_* env vars
+ * as server-wide fallback) and are passed in by the caller — see
+ * lib/user-settings.ts `effectiveCreds`.
  */
-export function gmailConfigured(): boolean {
-  return Boolean(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD);
+export interface GmailCreds {
+  user: string;
+  pass: string;
+  fromName?: string;
 }
 
-export async function sendEmail(opts: {
-  to: string;
-  subject: string;
-  text: string;
-}): Promise<{ messageId: string }> {
-  if (!gmailConfigured()) throw new Error("Gmail is not configured");
+export function gmailConfigured(creds: GmailCreds): boolean {
+  return Boolean(creds.user && creds.pass);
+}
+
+export async function sendEmail(
+  creds: GmailCreds,
+  opts: {
+    to: string;
+    subject: string;
+    text: string;
+  }
+): Promise<{ messageId: string }> {
+  if (!gmailConfigured(creds)) throw new Error("Gmail is not configured");
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
     secure: true,
     auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD,
+      user: creds.user,
+      pass: creds.pass,
     },
   });
   const info = await transporter.sendMail({
-    from: process.env.GMAIL_FROM_NAME
-      ? `"${process.env.GMAIL_FROM_NAME}" <${process.env.GMAIL_USER}>`
-      : process.env.GMAIL_USER,
+    from: creds.fromName ? `"${creds.fromName}" <${creds.user}>` : creds.user,
     to: opts.to,
     subject: opts.subject,
     text: opts.text,
@@ -50,10 +56,11 @@ export interface InboxReply {
  * addresses received since `since`. Used to detect lead replies.
  */
 export async function findRepliesFrom(
+  creds: GmailCreds,
   emails: string[],
   since: Date
 ): Promise<InboxReply[]> {
-  if (!gmailConfigured()) throw new Error("Gmail is not configured");
+  if (!gmailConfigured(creds)) throw new Error("Gmail is not configured");
   if (emails.length === 0) return [];
 
   const client = new ImapFlow({
@@ -61,8 +68,8 @@ export async function findRepliesFrom(
     port: 993,
     secure: true,
     auth: {
-      user: process.env.GMAIL_USER!,
-      pass: process.env.GMAIL_APP_PASSWORD!,
+      user: creds.user,
+      pass: creds.pass,
     },
     logger: false,
   });
