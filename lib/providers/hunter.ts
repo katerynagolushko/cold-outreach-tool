@@ -1,13 +1,12 @@
 import type { FoundLead, SearchQuery, SearchResult } from "./types";
 
 /**
- * Hunter.io discover + domain-search. Requires HUNTER_API_KEY.
+ * Hunter.io discover + domain-search. Requires a Hunter API key.
  * Hunter works domain-first: we discover companies matching the query,
  * then pull email addresses for each domain, preferring role matches.
  */
-export async function searchHunter(q: SearchQuery): Promise<SearchResult> {
-  const apiKey = process.env.HUNTER_API_KEY;
-  if (!apiKey) throw new Error("HUNTER_API_KEY is not configured");
+export async function searchHunter(q: SearchQuery, apiKey?: string): Promise<SearchResult> {
+  if (!apiKey) throw new Error("Hunter is not configured — add your API key in Settings.");
 
   const discover = await fetch("https://api.hunter.io/v2/discover", {
     method: "POST",

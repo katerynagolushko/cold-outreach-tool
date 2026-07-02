@@ -171,8 +171,8 @@ export default function CampaignPage({ params }: { params: Promise<{ id: string 
 
       {gmailReady === false && (
         <Banner tone="warn">
-          Gmail is not configured — sends will be <strong>simulated</strong> (recorded in the CRM,
-          no real email). Add <code>GMAIL_USER</code> and <code>GMAIL_APP_PASSWORD</code> — see{" "}
+          Gmail isn&apos;t connected for your profile — sends will be <strong>simulated</strong>{" "}
+          (recorded in the CRM, no real email). Connect your Gmail in{" "}
           <Link href="/settings" className="underline">
             Settings
           </Link>

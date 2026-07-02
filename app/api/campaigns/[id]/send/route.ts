@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { q, one, addActivity, setStage, type Lead, type Campaign } from "@/lib/db";
 import { renderTemplate } from "@/lib/template";
-import { gmailConfigured, sendEmail } from "@/lib/gmail";
+import { gmailConfigured, sendEmail, type GmailCreds } from "@/lib/gmail";
+import { authRequired, currentUser } from "@/lib/auth";
+import { effectiveCreds } from "@/lib/user-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -9,14 +11,21 @@ export const maxDuration = 300;
 const SEND_DELAY_MS = 1500; // pause between emails to stay well under Gmail rate limits
 
 /**
- * Send a campaign to the given leads.
- * Body: { leadIds: number[] }
- * If Gmail is not configured, messages are recorded as "simulated" (dry run)
- * so the whole pipeline can be exercised without sending real email.
+ * Send a campaign to the given leads, from the signed-in user's Gmail
+ * (Settings → Email sending). Body: { leadIds: number[] }
+ * If Gmail is not configured for this profile, messages are recorded as
+ * "simulated" (dry run) so the whole pipeline can be exercised without
+ * sending real email.
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const user = await currentUser();
+  if (!user) return authRequired();
+
   const { id } = await ctx.params;
-  const campaign = await one<Campaign>("SELECT * FROM campaigns WHERE id = $1", [id]);
+  const campaign = await one<Campaign>(
+    "SELECT * FROM campaigns WHERE id = $1 AND user_id = $2",
+    [id, user.id]
+  );
   if (!campaign) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
 
   const body = await req.json();
@@ -25,7 +34,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     return NextResponse.json({ error: "Select at least one lead" }, { status: 400 });
   }
 
-  const live = gmailConfigured();
+  const creds = await effectiveCreds(user.id);
+  const gmail: GmailCreds = {
+    user: creds.gmailUser,
+    pass: creds.gmailAppPassword,
+    fromName: creds.gmailFromName || user.name,
+  };
+  const live = gmailConfigured(gmail);
   const results: Array<{ leadId: number; email?: string; status: string; error?: string }> = [];
 
   const insertMsg = (
@@ -43,7 +58,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     );
 
   for (const leadId of leadIds) {
-    const lead = await one<Lead>("SELECT * FROM leads WHERE id = $1", [leadId]);
+    const lead = await one<Lead>("SELECT * FROM leads WHERE id = $1 AND user_id = $2", [
+      leadId,
+      user.id,
+    ]);
     if (!lead) {
       results.push({ leadId, status: "skipped", error: "Lead not found" });
       continue;
@@ -70,7 +88,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
 
     try {
-      const { messageId } = await sendEmail({ to: lead.email, subject, text });
+      const { messageId } = await sendEmail(gmail, { to: lead.email, subject, text });
       await insertMsg(leadId, subject, text, "sent", messageId, null);
       await addActivity(leadId, "email_sent", `Sent "${subject}"`);
       if (lead.stage === "new") await setStage(leadId, "contacted");
