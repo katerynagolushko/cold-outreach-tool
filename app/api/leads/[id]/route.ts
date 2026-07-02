@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, setStage, STAGES, type Stage } from "@/lib/db";
+import { q, one, setStage, STAGES, TS, type Stage } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -7,51 +7,52 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  const db = getDb();
-  const lead = db.prepare("SELECT * FROM leads WHERE id = ?").get(id);
+  const lead = await one(
+    `SELECT *, to_char(created_at, '${TS}') AS created_at FROM leads WHERE id = $1`,
+    [id]
+  );
   if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const messages = db
-    .prepare("SELECT * FROM messages WHERE lead_id = ? ORDER BY sent_at DESC")
-    .all(id);
-  const replies = db
-    .prepare("SELECT * FROM replies WHERE lead_id = ? ORDER BY received_at DESC")
-    .all(id);
-  const activities = db
-    .prepare("SELECT * FROM activities WHERE lead_id = ? ORDER BY created_at DESC, id DESC")
-    .all(id);
+  const messages = await q(
+    `SELECT *, to_char(sent_at, '${TS}') AS sent_at FROM messages WHERE lead_id = $1 ORDER BY messages.sent_at DESC`,
+    [id]
+  );
+  const replies = await q(
+    `SELECT *, to_char(received_at, '${TS}') AS received_at FROM replies WHERE lead_id = $1 ORDER BY replies.received_at DESC`,
+    [id]
+  );
+  const activities = await q(
+    `SELECT *, to_char(created_at, '${TS}') AS created_at FROM activities WHERE lead_id = $1 ORDER BY activities.created_at DESC, id DESC`,
+    [id]
+  );
   return NextResponse.json({ lead, messages, replies, activities });
 }
 
 export async function PATCH(req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  const db = getDb();
   const body = await req.json();
-  const lead = db.prepare("SELECT id FROM leads WHERE id = ?").get(id);
+  const lead = await one("SELECT id FROM leads WHERE id = $1", [id]);
   if (!lead) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   if (body.stage) {
     if (!STAGES.includes(body.stage)) {
       return NextResponse.json({ error: "Invalid stage" }, { status: 400 });
     }
-    setStage(db, Number(id), body.stage as Stage);
+    await setStage(Number(id), body.stage as Stage);
   }
-  for (const field of ["first_name", "last_name", "role", "company", "city"] as const) {
+  const editable = ["first_name", "last_name", "role", "company", "city"] as const;
+  for (const field of editable) {
     if (typeof body[field] === "string") {
-      db.prepare(`UPDATE leads SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`).run(
+      await q(`UPDATE leads SET ${field} = $1, updated_at = now() WHERE id = $2`, [
         body[field].trim(),
-        id
-      );
+        id,
+      ]);
     }
   }
-  return NextResponse.json({ lead: db.prepare("SELECT * FROM leads WHERE id = ?").get(id) });
+  return NextResponse.json({ lead: await one("SELECT * FROM leads WHERE id = $1", [id]) });
 }
 
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
   const { id } = await ctx.params;
-  const db = getDb();
-  db.prepare("DELETE FROM activities WHERE lead_id = ?").run(id);
-  db.prepare("DELETE FROM replies WHERE lead_id = ?").run(id);
-  db.prepare("DELETE FROM messages WHERE lead_id = ?").run(id);
-  db.prepare("DELETE FROM leads WHERE id = ?").run(id);
+  await q("DELETE FROM leads WHERE id = $1", [id]); // messages/replies/activities cascade
   return NextResponse.json({ ok: true });
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb, addActivity, setStage, type Lead } from "@/lib/db";
+import { q, addActivity, setStage, type Lead } from "@/lib/db";
 import { gmailConfigured, findRepliesFrom } from "@/lib/gmail";
 
 export const dynamic = "force-dynamic";
@@ -19,21 +19,18 @@ export async function POST() {
       { status: 400 }
     );
   }
-  const db = getDb();
-  const contacted = db
-    .prepare(
-      `SELECT l.*, (SELECT MIN(sent_at) FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent') AS first_sent
-       FROM leads l
-       WHERE EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent')`
-    )
-    .all() as Array<Lead & { first_sent: string }>;
+  const contacted = await q<Lead & { first_sent: string }>(
+    `SELECT l.*, (SELECT MIN(sent_at) FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent') AS first_sent
+     FROM leads l
+     WHERE EXISTS (SELECT 1 FROM messages m WHERE m.lead_id = l.id AND m.status = 'sent')`
+  );
 
   if (contacted.length === 0) {
     return NextResponse.json({ checked: 0, newReplies: 0, note: "No leads have been emailed yet." });
   }
 
   const earliest = contacted
-    .map((l) => new Date(l.first_sent + "Z"))
+    .map((l) => new Date(l.first_sent))
     .reduce((a, b) => (a < b ? a : b));
 
   try {
@@ -42,28 +39,22 @@ export async function POST() {
       earliest
     );
     const byEmail = new Map(contacted.map((l) => [l.email.toLowerCase(), l]));
-    const insert = db.prepare(
-      `INSERT INTO replies (lead_id, from_email, subject, snippet, received_at, imap_uid)
-       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(lead_id, imap_uid) DO NOTHING`
-    );
 
     let newReplies = 0;
     for (const r of inbox) {
       const lead = byEmail.get(r.fromEmail);
       if (!lead) continue;
-      const res = insert.run(
-        lead.id,
-        r.fromEmail,
-        r.subject,
-        "",
-        r.receivedAt.toISOString(),
-        r.uid
+      const inserted = await q<{ id: number }>(
+        `INSERT INTO replies (lead_id, from_email, subject, snippet, received_at, imap_uid)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (lead_id, imap_uid) DO NOTHING RETURNING id`,
+        [lead.id, r.fromEmail, r.subject, "", r.receivedAt.toISOString(), r.uid]
       );
-      if (res.changes > 0) {
+      if (inserted.length > 0) {
         newReplies++;
-        addActivity(db, lead.id, "reply", `Replied: "${r.subject}"`);
+        await addActivity(lead.id, "reply", `Replied: "${r.subject}"`);
         if (lead.stage === "new" || lead.stage === "contacted") {
-          setStage(db, lead.id, "replied");
+          await setStage(lead.id, "replied");
         }
       }
     }

@@ -7,6 +7,7 @@ interface Settings {
   providers: { apollo: boolean; hunter: boolean; demo: boolean };
   gmail: boolean;
   gmailUser: string | null;
+  persistentDb: boolean;
   demoDeployment: boolean;
 }
 
@@ -41,10 +42,36 @@ export default function SettingsPage() {
 
       {s?.demoDeployment && (
         <Banner tone="warn">
-          This is a hosted demo deployment: the database is ephemeral and resets periodically. Run
-          the app locally (or attach a persistent database) for real use.
+          This is a hosted demo deployment without a DATABASE_URL: the database is ephemeral and
+          resets periodically. Add a Neon Postgres DATABASE_URL for permanent storage.
         </Banner>
       )}
+
+      <Card>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Database</h2>
+          {s &&
+            (s.persistentDb ? (
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                Cloud Postgres (persistent)
+              </span>
+            ) : (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                Local embedded database
+              </span>
+            ))}
+        </div>
+        <p className="mt-2 text-sm text-slate-600">
+          Without configuration, data is stored in a local embedded Postgres (in{" "}
+          <code>./data/pg</code>). Set <code>DATABASE_URL</code> to a free{" "}
+          <a className="text-indigo-600 underline" href="https://neon.tech" target="_blank" rel="noreferrer">
+            Neon
+          </a>{" "}
+          Postgres connection string to store data in the cloud — required for persistent hosted
+          deployments, and it lets your local app and the hosted app share the same data.
+        </p>
+        <pre className="mt-2 rounded-lg bg-slate-900 p-3 text-xs text-slate-100">DATABASE_URL=postgresql://user:pass@host/db?sslmode=require</pre>
+      </Card>
 
       <Card>
         <div className="flex items-center justify-between">

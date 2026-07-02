@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, addActivity, setStage, type Lead, type Campaign } from "@/lib/db";
+import { q, one, addActivity, setStage, type Lead, type Campaign } from "@/lib/db";
 import { renderTemplate } from "@/lib/template";
 import { gmailConfigured, sendEmail } from "@/lib/gmail";
 
@@ -16,10 +16,7 @@ const SEND_DELAY_MS = 1500; // pause between emails to stay well under Gmail rat
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const db = getDb();
-  const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ?").get(id) as
-    | Campaign
-    | undefined;
+  const campaign = await one<Campaign>("SELECT * FROM campaigns WHERE id = $1", [id]);
   if (!campaign) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
 
   const body = await req.json();
@@ -29,24 +26,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const live = gmailConfigured();
-  const getLead = db.prepare("SELECT * FROM leads WHERE id = ?");
-  const alreadySent = db.prepare(
-    "SELECT COUNT(*) AS c FROM messages WHERE lead_id = ? AND campaign_id = ? AND status != 'failed'"
-  );
-  const insertMsg = db.prepare(
-    `INSERT INTO messages (lead_id, campaign_id, subject, body, status, gmail_message_id, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  );
-
   const results: Array<{ leadId: number; email?: string; status: string; error?: string }> = [];
 
+  const insertMsg = (
+    leadId: number,
+    subject: string,
+    text: string,
+    status: string,
+    gmailId: string | null,
+    error: string | null
+  ) =>
+    q(
+      `INSERT INTO messages (lead_id, campaign_id, subject, body, status, gmail_message_id, error)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [leadId, id, subject, text, status, gmailId, error]
+    );
+
   for (const leadId of leadIds) {
-    const lead = getLead.get(leadId) as Lead | undefined;
+    const lead = await one<Lead>("SELECT * FROM leads WHERE id = $1", [leadId]);
     if (!lead) {
       results.push({ leadId, status: "skipped", error: "Lead not found" });
       continue;
     }
-    if ((alreadySent.get(leadId, id) as { c: number }).c > 0) {
+    const already = await one<{ c: number }>(
+      `SELECT CAST(COUNT(*) AS INTEGER) AS c FROM messages
+       WHERE lead_id = $1 AND campaign_id = $2 AND status != 'failed'`,
+      [leadId, id]
+    );
+    if (already && already.c > 0) {
       results.push({ leadId, email: lead.email, status: "skipped", error: "Already sent this campaign" });
       continue;
     }
@@ -55,22 +62,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const text = renderTemplate(campaign.body, lead);
 
     if (!live) {
-      insertMsg.run(leadId, id, subject, text, "simulated", null, null);
-      addActivity(db, leadId, "email_sent", `Simulated send (Gmail not configured): "${subject}"`);
-      if (lead.stage === "new") setStage(db, leadId, "contacted");
+      await insertMsg(leadId, subject, text, "simulated", null, null);
+      await addActivity(leadId, "email_sent", `Simulated send (Gmail not configured): "${subject}"`);
+      if (lead.stage === "new") await setStage(leadId, "contacted");
       results.push({ leadId, email: lead.email, status: "simulated" });
       continue;
     }
 
     try {
       const { messageId } = await sendEmail({ to: lead.email, subject, text });
-      insertMsg.run(leadId, id, subject, text, "sent", messageId, null);
-      addActivity(db, leadId, "email_sent", `Sent "${subject}"`);
-      if (lead.stage === "new") setStage(db, leadId, "contacted");
+      await insertMsg(leadId, subject, text, "sent", messageId, null);
+      await addActivity(leadId, "email_sent", `Sent "${subject}"`);
+      if (lead.stage === "new") await setStage(leadId, "contacted");
       results.push({ leadId, email: lead.email, status: "sent" });
     } catch (e) {
       const err = (e as Error).message;
-      insertMsg.run(leadId, id, subject, text, "failed", null, err);
+      await insertMsg(leadId, subject, text, "failed", null, err);
       results.push({ leadId, email: lead.email, status: "failed", error: err });
     }
     if (leadIds.length > 1) await new Promise((r) => setTimeout(r, SEND_DELAY_MS));

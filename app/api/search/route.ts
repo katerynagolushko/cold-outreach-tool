@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchLeads, type ProviderName } from "@/lib/providers";
-import { getDb } from "@/lib/db";
+import { q } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +19,8 @@ export async function POST(req: NextRequest) {
     const result = await searchLeads(query, (body.provider as ProviderName) ?? "auto");
 
     // annotate which results are already in the CRM
-    const db = getDb();
     const existing = new Set(
-      (db.prepare("SELECT email FROM leads").all() as { email: string }[]).map((r) =>
-        r.email.toLowerCase()
-      )
+      (await q<{ email: string }>("SELECT email FROM leads")).map((r) => r.email.toLowerCase())
     );
     const leads = result.leads.map((l) => ({
       ...l,

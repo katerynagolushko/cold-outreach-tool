@@ -1,4 +1,3 @@
-import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 
@@ -35,146 +34,133 @@ export interface Campaign {
   created_at: string;
 }
 
-export interface Message {
-  id: number;
-  lead_id: number;
-  campaign_id: number | null;
-  subject: string;
-  body: string;
-  status: "sent" | "failed" | "simulated";
-  gmail_message_id: string | null;
-  error: string | null;
-  sent_at: string;
-}
+export type Row = Record<string, unknown>;
+type Exec = (text: string, params?: unknown[]) => Promise<Row[]>;
 
-export interface Reply {
-  id: number;
-  lead_id: number;
-  from_email: string;
-  subject: string;
-  snippet: string;
-  received_at: string;
-  imap_uid: string;
-}
+/**
+ * Storage backends, chosen by DATABASE_URL:
+ *  - postgresql://... → Neon serverless Postgres over HTTPS (persistent, for
+ *    hosted deployments; also usable locally to share one database).
+ *  - unset → PGlite, an embedded Postgres stored in ./data/pg (zero-config
+ *    local use). On Vercel without DATABASE_URL it falls back to /tmp
+ *    (ephemeral demo mode).
+ * Both speak real Postgres, so every query below has a single dialect.
+ */
+let execPromise: Promise<Exec> | null = null;
 
-export interface Activity {
-  id: number;
-  lead_id: number;
-  type: "note" | "stage_change" | "email_sent" | "reply" | "created";
-  content: string;
-  created_at: string;
-}
-
-function dbPath(): string {
-  if (process.env.DATABASE_PATH) return process.env.DATABASE_PATH;
-  if (process.env.VERCEL) return "/tmp/outreach.db";
-  const dir = path.join(process.cwd(), "data");
+async function createExec(): Promise<Exec> {
+  const url = process.env.DATABASE_URL;
+  if (url && /^postgres/i.test(url)) {
+    const { neon } = await import("@neondatabase/serverless");
+    const sql = neon(url);
+    return async (text, params) => (await sql.query(text, (params ?? []) as never)) as Row[];
+  }
+  const { PGlite } = await import("@electric-sql/pglite");
+  const dir = process.env.VERCEL
+    ? "/tmp/outreach-pg"
+    : path.join(process.cwd(), "data", "pg");
   fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "outreach.db");
+  const db = new PGlite(dir);
+  return async (text, params) => (await db.query(text, params ?? [])).rows as Row[];
 }
 
-let _db: Database.Database | null = null;
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS leads (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT '',
+  company TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  stage TEXT NOT NULL DEFAULT 'new',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  campaign_id INT REFERENCES campaigns(id) ON DELETE SET NULL,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL,
+  gmail_message_id TEXT,
+  error TEXT,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS replies (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  from_email TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  snippet TEXT NOT NULL DEFAULT '',
+  received_at TIMESTAMPTZ NOT NULL,
+  imap_uid TEXT NOT NULL,
+  UNIQUE(lead_id, imap_uid)
+);
+CREATE TABLE IF NOT EXISTS activities (
+  id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  lead_id INT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
 
-export function getDb(): Database.Database {
-  if (_db) return _db;
-  _db = new Database(dbPath());
-  _db.pragma("journal_mode = WAL");
-  _db.exec(`
-    CREATE TABLE IF NOT EXISTS leads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL DEFAULT '',
-      email TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL DEFAULT '',
-      company TEXT NOT NULL DEFAULT '',
-      city TEXT NOT NULL DEFAULT '',
-      source TEXT NOT NULL DEFAULT 'manual',
-      stage TEXT NOT NULL DEFAULT 'new',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS campaigns (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      body TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-      campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
-      subject TEXT NOT NULL,
-      body TEXT NOT NULL,
-      status TEXT NOT NULL,
-      gmail_message_id TEXT,
-      error TEXT,
-      sent_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS replies (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-      from_email TEXT NOT NULL,
-      subject TEXT NOT NULL DEFAULT '',
-      snippet TEXT NOT NULL DEFAULT '',
-      received_at TEXT NOT NULL,
-      imap_uid TEXT NOT NULL,
-      UNIQUE(lead_id, imap_uid)
-    );
-    CREATE TABLE IF NOT EXISTS activities (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      content TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
-  maybeSeed(_db);
-  return _db;
+async function getExec(): Promise<Exec> {
+  if (!execPromise) {
+    execPromise = (async () => {
+      const exec = await createExec();
+      for (const stmt of SCHEMA.split(";")) {
+        if (stmt.trim()) await exec(stmt);
+      }
+      return exec;
+    })().catch((e) => {
+      execPromise = null; // allow retry on next request
+      throw e;
+    });
+  }
+  return execPromise;
 }
 
-export function addActivity(
-  db: Database.Database,
+/** Run a query and return its rows. Placeholders are Postgres-style $1, $2… */
+export async function q<T = Row>(text: string, params?: unknown[]): Promise<T[]> {
+  const exec = await getExec();
+  return (await exec(text, params)) as T[];
+}
+
+/** Run a query and return the first row (or null). */
+export async function one<T = Row>(text: string, params?: unknown[]): Promise<T | null> {
+  const rows = await q<T>(text, params);
+  return rows[0] ?? null;
+}
+
+export async function addActivity(
   leadId: number,
-  type: Activity["type"],
+  type: "note" | "stage_change" | "email_sent" | "reply" | "created",
   content: string
-) {
-  db.prepare("INSERT INTO activities (lead_id, type, content) VALUES (?, ?, ?)").run(
+): Promise<void> {
+  await q("INSERT INTO activities (lead_id, type, content) VALUES ($1, $2, $3)", [
     leadId,
     type,
-    content
-  );
+    content,
+  ]);
 }
 
-export function setStage(db: Database.Database, leadId: number, stage: Stage) {
-  const lead = db.prepare("SELECT stage FROM leads WHERE id = ?").get(leadId) as
-    | { stage: Stage }
-    | undefined;
+export async function setStage(leadId: number, stage: Stage): Promise<void> {
+  const lead = await one<{ stage: Stage }>("SELECT stage FROM leads WHERE id = $1", [leadId]);
   if (!lead || lead.stage === stage) return;
-  db.prepare("UPDATE leads SET stage = ?, updated_at = datetime('now') WHERE id = ?").run(
-    stage,
-    leadId
-  );
-  addActivity(db, leadId, "stage_change", `${STAGE_LABELS[lead.stage]} → ${STAGE_LABELS[stage]}`);
+  await q("UPDATE leads SET stage = $1, updated_at = now() WHERE id = $2", [stage, leadId]);
+  await addActivity(leadId, "stage_change", `${STAGE_LABELS[lead.stage]} → ${STAGE_LABELS[stage]}`);
 }
 
-/** Seed a small demo dataset on hosted demo deployments so the UI isn't empty. */
-function maybeSeed(db: Database.Database) {
-  if (!process.env.VERCEL && process.env.SEED_DEMO !== "1") return;
-  const count = (db.prepare("SELECT COUNT(*) AS c FROM leads").get() as { c: number }).c;
-  if (count > 0) return;
-  const demo: Array<[string, string, string, string, string, string, Stage]> = [
-    ["Amelia", "Clarke", "amelia.clarke@huddlespaces.example", "Event Manager", "Huddle Spaces", "London", "contacted"],
-    ["Oliver", "Bennett", "oliver.bennett@thecommondesk.example", "Event Manager", "The Common Desk", "London", "replied"],
-    ["Priya", "Sharma", "priya.sharma@nestcowork.example", "Community & Events Lead", "Nest Cowork", "London", "meeting"],
-    ["James", "Whitfield", "james.whitfield@forgeworkspace.example", "Head of Events", "Forge Workspace", "London", "new"],
-    ["Sofia", "Marchetti", "sofia.marchetti@orbitstudios.example", "Event Manager", "Orbit Studios", "London", "won"],
-  ];
-  const ins = db.prepare(
-    "INSERT INTO leads (first_name, last_name, email, role, company, city, source, stage) VALUES (?, ?, ?, ?, ?, ?, 'demo', ?)"
-  );
-  for (const d of demo) {
-    const r = ins.run(d[0], d[1], d[2], d[3], d[4], d[5], d[6]);
-    addActivity(db, Number(r.lastInsertRowid), "created", "Imported from demo seed");
-  }
-}
+/** to_char format used everywhere a timestamp is shown in the UI. */
+export const TS = "YYYY-MM-DD HH24:MI";

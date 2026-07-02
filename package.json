@@ -9,7 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
+    "@electric-sql/pglite": "^0.5.3",
+    "@neondatabase/serverless": "^1.1.0",
     "imapflow": "^1.4.3",
     "next": "16.2.10",
     "nodemailer": "^9.0.3",
@@ -18,7 +19,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",

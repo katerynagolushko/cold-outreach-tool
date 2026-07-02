@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { q, TS } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -9,16 +9,13 @@ function csvField(v: unknown): string {
 }
 
 export async function GET() {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT l.first_name, l.last_name, l.email, l.role, l.company, l.city, l.stage, l.source,
-        (SELECT COUNT(*) FROM messages m WHERE m.lead_id = l.id AND m.status != 'failed') AS emails_sent,
-        (SELECT COUNT(*) FROM replies r WHERE r.lead_id = l.id) AS replies,
-        l.created_at
-       FROM leads l ORDER BY l.id`
-    )
-    .all() as Record<string, unknown>[];
+  const rows = await q(
+    `SELECT l.first_name, l.last_name, l.email, l.role, l.company, l.city, l.stage, l.source,
+      CAST((SELECT COUNT(*) FROM messages m WHERE m.lead_id = l.id AND m.status != 'failed') AS INTEGER) AS emails_sent,
+      CAST((SELECT COUNT(*) FROM replies r WHERE r.lead_id = l.id) AS INTEGER) AS replies,
+      to_char(l.created_at, '${TS}') AS created_at
+     FROM leads l ORDER BY l.id`
+  );
   const header = [
     "first_name", "last_name", "email", "role", "company", "city",
     "stage", "source", "emails_sent", "replies", "created_at",

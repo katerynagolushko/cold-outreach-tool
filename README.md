@@ -32,7 +32,10 @@ cp .env.example .env.local   # fill in what you have (everything is optional)
 npm run dev                  # open http://localhost:3000
 ```
 
-The database is a single SQLite file in `./data/` — no external services needed.
+With no configuration, data is stored in an embedded Postgres in `./data/` —
+no external services needed. To use a cloud database instead (persistent
+hosting, or sharing one database between machines), set `DATABASE_URL` to a
+free [Neon](https://neon.tech) Postgres connection string.
 
 ## Connecting your Gmail (Google Workspace)
 
@@ -61,11 +64,15 @@ you can also use an OAuth-enabled sending tool of your choice.
 
 ## Deploying
 
-Works on Vercel out of the box **as a demo** (the SQLite file lives in `/tmp`,
-so data resets between serverless cold starts). For a persistent hosted
-deployment, either run it on any small VM (`npm run build && npm start`) where
-the SQLite file persists, or point `DATABASE_PATH` at a mounted volume.
-Set `APP_PASSWORD` to protect a hosted instance with a password.
+Deploy to Vercel and set two environment variables:
+
+- `DATABASE_URL` — a free [Neon](https://neon.tech) Postgres connection string
+  (without it, the hosted copy runs in ephemeral demo mode and resets itself)
+- `APP_PASSWORD` — protects the hosted instance with a password
+
+The schema is created automatically on first request. Point your local
+`.env.local` at the same `DATABASE_URL` and your machine and the hosted app
+share one database.
 
 ## Compliance notes
 

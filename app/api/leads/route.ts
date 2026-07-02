@@ -1,45 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb, addActivity, STAGES, type Stage } from "@/lib/db";
+import { q, addActivity, STAGES, TS, type Stage } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const db = getDb();
   const stage = req.nextUrl.searchParams.get("stage");
-  const q = req.nextUrl.searchParams.get("q")?.trim();
+  const search = req.nextUrl.searchParams.get("q")?.trim();
   let sql = `
     SELECT l.*,
-      (SELECT COUNT(*) FROM messages m WHERE m.lead_id = l.id AND m.status != 'failed') AS messages_sent,
-      (SELECT COUNT(*) FROM replies r WHERE r.lead_id = l.id) AS reply_count,
-      (SELECT MAX(sent_at) FROM messages m WHERE m.lead_id = l.id) AS last_contacted
+      to_char(l.created_at, '${TS}') AS created_at,
+      CAST((SELECT COUNT(*) FROM messages m WHERE m.lead_id = l.id AND m.status != 'failed') AS INTEGER) AS messages_sent,
+      CAST((SELECT COUNT(*) FROM replies r WHERE r.lead_id = l.id) AS INTEGER) AS reply_count,
+      (SELECT to_char(MAX(sent_at), '${TS}') FROM messages m WHERE m.lead_id = l.id) AS last_contacted
     FROM leads l`;
   const where: string[] = [];
   const params: unknown[] = [];
   if (stage && STAGES.includes(stage as Stage)) {
-    where.push("l.stage = ?");
     params.push(stage);
+    where.push(`l.stage = $${params.length}`);
   }
-  if (q) {
+  if (search) {
+    params.push(`%${search}%`);
     where.push(
-      "(l.first_name || ' ' || l.last_name || ' ' || l.email || ' ' || l.company || ' ' || l.role || ' ' || l.city) LIKE ?"
+      `(l.first_name || ' ' || l.last_name || ' ' || l.email || ' ' || l.company || ' ' || l.role || ' ' || l.city) ILIKE $${params.length}`
     );
-    params.push(`%${q}%`);
   }
   if (where.length) sql += " WHERE " + where.join(" AND ");
   sql += " ORDER BY l.updated_at DESC";
-  return NextResponse.json({ leads: db.prepare(sql).all(...params) });
+  return NextResponse.json({ leads: await q(sql, params) });
 }
 
 // Import one or many leads: { leads: [{first_name, last_name, email, role, company, city, source}] }
 export async function POST(req: NextRequest) {
-  const db = getDb();
   const body = await req.json();
   const leads = Array.isArray(body.leads) ? body.leads : [body];
-  const ins = db.prepare(`
-    INSERT INTO leads (first_name, last_name, email, role, company, city, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(email) DO NOTHING
-  `);
   let imported = 0;
   let skipped = 0;
   for (const l of leads) {
@@ -49,18 +43,23 @@ export async function POST(req: NextRequest) {
       skipped++;
       continue;
     }
-    const r = ins.run(
-      first,
-      String(l.last_name ?? "").trim(),
-      email,
-      String(l.role ?? "").trim(),
-      String(l.company ?? "").trim(),
-      String(l.city ?? "").trim(),
-      String(l.source ?? "manual")
+    const rows = await q<{ id: number }>(
+      `INSERT INTO leads (first_name, last_name, email, role, company, city, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (email) DO NOTHING RETURNING id`,
+      [
+        first,
+        String(l.last_name ?? "").trim(),
+        email,
+        String(l.role ?? "").trim(),
+        String(l.company ?? "").trim(),
+        String(l.city ?? "").trim(),
+        String(l.source ?? "manual"),
+      ]
     );
-    if (r.changes > 0) {
+    if (rows.length > 0) {
       imported++;
-      addActivity(db, Number(r.lastInsertRowid), "created", `Imported from ${l.source ?? "manual"}`);
+      await addActivity(rows[0].id, "created", `Imported from ${l.source ?? "manual"}`);
     } else {
       skipped++;
     }
