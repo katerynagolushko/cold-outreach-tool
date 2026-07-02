@@ -10,7 +10,9 @@ account, and track every lead through a sales pipeline — in one small self-hos
    names + email addresses. Real data comes from **Apollo.io** or **Hunter.io**
    (bring your own API key); without a key the tool generates clearly-labelled
    **demo leads** (all on the reserved `.example` domain, so nothing can ever
-   reach a real inbox) so you can try the whole flow immediately.
+   reach a real inbox) so you can try the whole flow immediately. You can also
+   **import your own lead list as CSV** (and export the CRM back to CSV) from
+   the Leads page.
 2. **Message creation** — write one campaign template; `{{firstName}}`
    (plus `{{company}}`, `{{role}}`, `{{city}}`, `{{lastName}}`) is filled in
    per lead, with a live preview for any recipient.
